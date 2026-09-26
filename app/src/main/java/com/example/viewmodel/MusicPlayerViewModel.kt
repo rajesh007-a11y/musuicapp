@@ -249,8 +249,8 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
             }
         }
 
-        audioPlayer.setOnQueueEndApproachListener {
-            checkAndPrefetchNextSongs()
+        audioPlayer.setOnQueueEndApproachListener { lastSongId ->
+            checkAndPrefetchNextSongs(lastSongId)
         }
 
         // Initialize taste profile
@@ -507,22 +507,23 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         }
     }
 
-    private fun checkAndPrefetchNextSongs() {
+    private fun checkAndPrefetchNextSongs(lastSongId: String) {
         if (_isOfflineOnlyMode.value) return
-        val current = _currentSong.value ?: return
-        val queue = _currentQueue.value
         
         if (isPrefetching) return
         isPrefetching = true
         
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             try {
+                val queue = _currentQueue.value
+                val lastSong = queue.find { it.id == lastSongId } ?: return@launch
+                
                 var newSongsToAdd: List<Song> = emptyList()
-                val recommendations = songSearchRepository.getYouTubeRecommendations(current.title, current.artist, globalQueuedTitles)
+                val recommendations = songSearchRepository.getYouTubeRecommendations(lastSong.title, lastSong.artist, globalQueuedTitles)
                 newSongsToAdd = filterAndDeduplicate(recommendations)
                 
                 if (newSongsToAdd.isEmpty()) {
-                    val similarSongs = songSearchRepository.getSimilarDomainSongs(current.id)
+                    val similarSongs = songSearchRepository.getSimilarDomainSongs(lastSongId)
                     val blacklist = listOf("dj", "remix", "mix", "lofi", "slowed", "reverb", "8d", "mashup", "lo-fi", "instrumental")
                     
                     val sanitized = similarSongs.filter { song ->
@@ -531,7 +532,7 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
                         !blacklist.any { lowerTitle.contains(it) || lowerArtist.contains(it) }
                     }
                     
-                    val currentArtists = current.artist.lowercase().split(",").map { it.trim() }.filter { it.isNotEmpty() }
+                    val currentArtists = lastSong.artist.lowercase().split(",").map { it.trim() }.filter { it.isNotEmpty() }
                     val sortedSimilar = sanitized.sortedByDescending { song ->
                         val songArtist = song.artist.lowercase()
                         if (currentArtists.any { songArtist.contains(it) }) 1 else 0
@@ -540,7 +541,7 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
                 }
 
                 if (newSongsToAdd.isEmpty()) {
-                    val fallbackQuery = current.let { "${it.artist} best songs" }
+                    val fallbackQuery = "${lastSong.artist} top songs"
                     val results = songSearchRepository.searchDomainSongs(fallbackQuery)
                     newSongsToAdd = filterAndDeduplicate(results).take(3)
                 }

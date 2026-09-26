@@ -53,7 +53,7 @@ class SoundifyAudioPlayer(private val context: Context) {
 
     private var onSongCompletionListener: (() -> Unit)? = null
     private var onSongErrorListener: ((Song) -> Unit)? = null
-    private var onQueueEndApproachListener: (() -> Unit)? = null
+    private var onQueueEndApproachListener: ((String) -> Unit)? = null
     private var onTrackChangedListener: ((String) -> Unit)? = null
 
     private val playerListener = object : Player.Listener {
@@ -78,7 +78,8 @@ class SoundifyAudioPlayer(private val context: Context) {
             mediaItem?.mediaId?.let { onTrackChangedListener?.invoke(it) }
             
             if (player.mediaItemCount > 0 && player.currentMediaItemIndex >= player.mediaItemCount - 2) {
-                onQueueEndApproachListener?.invoke()
+                val lastSongId = player.getMediaItemAt(player.mediaItemCount - 1).mediaId
+                onQueueEndApproachListener?.invoke(lastSongId)
             }
         }
 
@@ -100,7 +101,7 @@ class SoundifyAudioPlayer(private val context: Context) {
         onSongErrorListener = listener
     }
 
-    fun setOnQueueEndApproachListener(listener: () -> Unit) {
+    fun setOnQueueEndApproachListener(listener: (String) -> Unit) {
         onQueueEndApproachListener = listener
     }
 
