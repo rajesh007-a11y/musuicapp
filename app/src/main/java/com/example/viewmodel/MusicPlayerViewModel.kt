@@ -387,26 +387,36 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
             _isDjThinking.value = true
             viewModelScope.launch {
                 try {
-                    val fallbackQuery = current?.let { "${it.artist} ${it.genre} hits" } ?: "Top Bollywood hits"
-                    val topGenre = _tasteProfile.value.topGenres.firstOrNull()?.genre ?: "Pop"
-                    val nextQuery = if (current != null) {
-                        listOf(
-                            "${current.artist} best songs",
-                            "${current.genre} ${topGenre} hits",
-                            "${current.artist} new",
-                            "Similar to ${current.title} by ${current.artist}"
-                        ).random()
-                    } else {
-                        fallbackQuery
+                    var newSongsToAdd: List<Song> = emptyList()
+
+                    if (current != null) {
+                        val similarSongs = songSearchRepository.getSimilarDomainSongs(current.id)
+                        newSongsToAdd = similarSongs.filter { song -> !queue.any { it.id == song.id } }
                     }
 
-                    val results = songSearchRepository.searchDomainSongs(nextQuery)
-                    val nextSong = results.filter { it.id != current?.id }.randomOrNull()
+                    if (newSongsToAdd.isEmpty()) {
+                        // Fallback to old search method
+                        val fallbackQuery = current?.let { "${it.artist} ${it.genre} hits" } ?: "Top Bollywood hits"
+                        val topGenre = _tasteProfile.value.topGenres.firstOrNull()?.genre ?: "Pop"
+                        val nextQuery = if (current != null) {
+                            listOf(
+                                "${current.artist} best songs",
+                                "${current.genre} ${topGenre} hits",
+                                "${current.artist} new",
+                                "Similar to ${current.title} by ${current.artist}"
+                            ).random()
+                        } else {
+                            fallbackQuery
+                        }
 
-                    if (nextSong != null) {
-                        val newQueue = queue + nextSong
+                        val results = songSearchRepository.searchDomainSongs(nextQuery)
+                        newSongsToAdd = results.filter { song -> !queue.any { it.id == song.id } }
+                    }
+
+                    if (newSongsToAdd.isNotEmpty()) {
+                        val newQueue = queue + newSongsToAdd
                         _currentQueue.value = newQueue
-                        playSong(nextSong)
+                        playSong(newSongsToAdd.first())
                         _isDjThinking.value = false
                         return@launch
                     }

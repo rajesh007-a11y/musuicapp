@@ -81,4 +81,21 @@ class SongSearchRepository(
             emptyList()
         }
     }
+
+    /**
+     * Fetches similar songs for a given JioSaavn song ID.
+     */
+    suspend fun getSimilarDomainSongs(songId: String): List<Song> = withContext(Dispatchers.IO) {
+        if (songId.isBlank()) return@withContext emptyList()
+        try {
+            // Strip "saavn_" prefix if present
+            val cleanId = songId.removePrefix("saavn_")
+            val response = apiService.getSimilarSongs(id = cleanId)
+            if (!response.isSuccessful) return@withContext emptyList()
+
+            response.body()?.data.orEmpty().mapNotNull { it.toDomainSong() }
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
 }

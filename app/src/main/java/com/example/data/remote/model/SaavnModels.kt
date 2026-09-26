@@ -11,6 +11,12 @@ data class SaavnSearchResponse(
 )
 
 @JsonClass(generateAdapter = true)
+data class SaavnSuggestionsResponse(
+    @Json(name = "success") val success: Boolean = false,
+    @Json(name = "data") val data: List<SaavnSongItem>? = emptyList()
+)
+
+@JsonClass(generateAdapter = true)
 data class SaavnSearchData(
     @Json(name = "total") val total: Int = 0,
     @Json(name = "start") val start: Int = 0,

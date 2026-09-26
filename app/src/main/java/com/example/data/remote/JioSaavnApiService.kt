@@ -10,6 +10,7 @@ import retrofit2.Response
 import retrofit2.Retrofit
 import retrofit2.converter.moshi.MoshiConverterFactory
 import retrofit2.http.GET
+import retrofit2.http.Path
 import retrofit2.http.Query
 import java.util.concurrent.TimeUnit
 
@@ -21,6 +22,12 @@ interface JioSaavnApiService {
         @Query("page") page: Int = 1,
         @Query("limit") limit: Int = 20
     ): Response<SaavnSearchResponse>
+
+    @GET("api/songs/{id}/suggestions")
+    suspend fun getSimilarSongs(
+        @Path("id") id: String,
+        @Query("limit") limit: Int = 10
+    ): Response<com.example.data.remote.model.SaavnSuggestionsResponse>
 
     companion object {
         private const val DEFAULT_BASE_URL = "https://jiosaavn-api-jnlz.onrender.com/"
