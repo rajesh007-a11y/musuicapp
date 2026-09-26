@@ -28,6 +28,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 enum class NavigationTab(val title: String) {
     HOME("Home"),
@@ -378,7 +380,7 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
     private fun cleanTitle(t: String) = t.replace(Regex("\\(.*?\\)|\\[.*?\\]"), "").trim().lowercase()
     val playedSongIds = mutableSetOf<String>()
     val playedSongTitles = mutableSetOf<String>()
-    private var isPrefetching = false
+    private val queueFetchMutex = Mutex()
 
     fun playSong(song: Song, queue: List<Song>? = null) {
         if (_isOfflineOnlyMode.value && !song.isDownloaded) {
@@ -468,90 +470,73 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
 
     private suspend fun forceFetchAndPlayNext(current: Song?) {
         if (current == null) return
-        val queue = _currentQueue.value
-        try {
-            var newSongsToAdd: List<Song> = emptyList()
-            val recommendations = songSearchRepository.getYouTubeRecommendations(current.title, current.artist, playedSongTitles)
-            newSongsToAdd = recommendations.filter { song ->
-                !playedSongIds.contains(song.id) && !playedSongTitles.contains(cleanTitle(song.title))
-            }
-            
-            if (newSongsToAdd.isEmpty()) {
-                val similarSongs = songSearchRepository.getSimilarDomainSongs(current.id)
-                newSongsToAdd = similarSongs.filter { song ->
-                    !playedSongIds.contains(song.id) && !playedSongTitles.contains(cleanTitle(song.title))
-                }.take(3)
-            }
-            if (newSongsToAdd.isEmpty()) {
-                val fallbackQuery = "${current.artist} best songs"
-                val results = songSearchRepository.searchDomainSongs(fallbackQuery)
-                newSongsToAdd = results.filter { song ->
-                    !playedSongIds.contains(song.id) && !playedSongTitles.contains(cleanTitle(song.title))
-                }.take(3)
-            }
-            
-            if (newSongsToAdd.isNotEmpty()) {
-                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
-                    newSongsToAdd.forEach { 
-                        playedSongIds.add(it.id)
-                        playedSongTitles.add(cleanTitle(it.title))
-                    }
-                    val newQueue = queue + newSongsToAdd
-                    _currentQueue.value = newQueue
-                    audioPlayer.appendToQueue(newSongsToAdd)
-                    audioPlayer.nextTrack()
-                }
-            } else {
-                // If completely failed, only then fallback to 0
-                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
-                    val fallbackIndex = if (_isShuffle.value) queue.indices.random() else 0
-                    audioPlayer.playQueue(queue, fallbackIndex)
-                }
-            }
-        } catch (e: Exception) {
-            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
-                val fallbackIndex = if (_isShuffle.value) queue.indices.random() else 0
-                audioPlayer.playQueue(queue, fallbackIndex)
-            }
-        } finally {
-            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
-                _isDjThinking.value = false
-            }
-        }
-    }
-
-    private fun checkAndPrefetchNextSongs(lastSongId: String) {
-        if (_isOfflineOnlyMode.value) return
         
-        if (isPrefetching) return
-        isPrefetching = true
-        
-        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+        queueFetchMutex.withLock {
+            val queue = _currentQueue.value
             try {
-                val queue = _currentQueue.value
-                val lastSong = queue.find { it.id == lastSongId } ?: return@launch
-                
                 var newSongsToAdd: List<Song> = emptyList()
-                val recommendations = songSearchRepository.getYouTubeRecommendations(lastSong.title, lastSong.artist, playedSongTitles)
+                val snapshotTitles = playedSongTitles.toSet()
+                
+                val recommendations = songSearchRepository.getYouTubeRecommendations(current.title, current.artist, snapshotTitles)
                 newSongsToAdd = recommendations.filter { song ->
                     !playedSongIds.contains(song.id) && !playedSongTitles.contains(cleanTitle(song.title))
                 }
                 
                 if (newSongsToAdd.isEmpty()) {
-                    val similarSongs = songSearchRepository.getSimilarDomainSongs(lastSongId)
+                    val similarSongs = songSearchRepository.getSimilarDomainSongs(current.id)
                     newSongsToAdd = similarSongs.filter { song ->
                         !playedSongIds.contains(song.id) && !playedSongTitles.contains(cleanTitle(song.title))
                     }.take(3)
                 }
-
                 if (newSongsToAdd.isEmpty()) {
-                    val fallbackQuery = "${lastSong.artist} top songs"
+                    val fallbackQuery = "${current.artist} best songs"
                     val results = songSearchRepository.searchDomainSongs(fallbackQuery)
                     newSongsToAdd = results.filter { song ->
                         !playedSongIds.contains(song.id) && !playedSongTitles.contains(cleanTitle(song.title))
                     }.take(3)
                 }
+                
+                // Retry with pruned blacklist if completely empty
+                if (newSongsToAdd.isEmpty()) {
+                    val retainCount = 40
+                    if (playedSongIds.size > retainCount) {
+                        val idsToKeep = playedSongIds.toList().takeLast(retainCount)
+                        playedSongIds.clear()
+                        playedSongIds.addAll(idsToKeep)
+                    }
+                    if (playedSongTitles.size > retainCount) {
+                        val titlesToKeep = playedSongTitles.toList().takeLast(retainCount)
+                        playedSongTitles.clear()
+                        playedSongTitles.addAll(titlesToKeep)
+                    }
 
+                    val snapshotTitlesRetry = playedSongTitles.toSet()
+                    val recommendationsRetry = songSearchRepository.getYouTubeRecommendations(current.title, current.artist, snapshotTitlesRetry)
+                    newSongsToAdd = recommendationsRetry.filter { song ->
+                        !playedSongIds.contains(song.id) && !playedSongTitles.contains(cleanTitle(song.title))
+                    }
+                    
+                    if (newSongsToAdd.isEmpty()) {
+                        val similarSongsRetry = songSearchRepository.getSimilarDomainSongs(current.id)
+                        newSongsToAdd = similarSongsRetry.filter { song ->
+                            !playedSongIds.contains(song.id) && !playedSongTitles.contains(cleanTitle(song.title))
+                        }.take(3)
+                    }
+                    
+                    if (newSongsToAdd.isEmpty()) {
+                        val fallbackQueryRetry = "${current.artist} best songs"
+                        val resultsRetry = songSearchRepository.searchDomainSongs(fallbackQueryRetry)
+                        newSongsToAdd = resultsRetry.filter { song ->
+                            !playedSongIds.contains(song.id) && !playedSongTitles.contains(cleanTitle(song.title))
+                        }.take(3)
+                    }
+                }
+                
+                // Final re-filter right before appending to catch anything added by a fast concurrent operation
+                newSongsToAdd = newSongsToAdd.filter { song ->
+                    !playedSongIds.contains(song.id) && !playedSongTitles.contains(cleanTitle(song.title))
+                }
+                
                 if (newSongsToAdd.isNotEmpty()) {
                     kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
                         newSongsToAdd.forEach { 
@@ -561,13 +546,115 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
                         val newQueue = queue + newSongsToAdd
                         _currentQueue.value = newQueue
                         audioPlayer.appendToQueue(newSongsToAdd)
+                        audioPlayer.nextTrack()
+                    }
+                } else {
+                    android.util.Log.w("MusicPlayerVM", "WARNING: Endless queue starved completely despite retry. Falling back to old queue.")
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                        val fallbackIndex = if (_isShuffle.value) queue.indices.random() else 0
+                        audioPlayer.playQueue(queue, fallbackIndex)
                     }
                 }
             } catch (e: Exception) {
-                // Ignore
+                android.util.Log.w("MusicPlayerVM", "WARNING: Endless queue error: ${e.message}. Falling back to old queue.")
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                    val fallbackIndex = if (_isShuffle.value) queue.indices.random() else 0
+                    audioPlayer.playQueue(queue, fallbackIndex)
+                }
             } finally {
                 kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
-                    isPrefetching = false
+                    _isDjThinking.value = false
+                }
+            }
+        }
+    }
+
+    private fun checkAndPrefetchNextSongs(lastSongId: String) {
+        if (_isOfflineOnlyMode.value) return
+        
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            queueFetchMutex.withLock {
+                try {
+                    val queue = _currentQueue.value
+                    val lastSong = queue.find { it.id == lastSongId } ?: return@launch
+                    
+                    var newSongsToAdd: List<Song> = emptyList()
+                    val snapshotTitles = playedSongTitles.toSet()
+                    
+                    val recommendations = songSearchRepository.getYouTubeRecommendations(lastSong.title, lastSong.artist, snapshotTitles)
+                    newSongsToAdd = recommendations.filter { song ->
+                        !playedSongIds.contains(song.id) && !playedSongTitles.contains(cleanTitle(song.title))
+                    }
+                    
+                    if (newSongsToAdd.isEmpty()) {
+                        val similarSongs = songSearchRepository.getSimilarDomainSongs(lastSongId)
+                        newSongsToAdd = similarSongs.filter { song ->
+                            !playedSongIds.contains(song.id) && !playedSongTitles.contains(cleanTitle(song.title))
+                        }.take(3)
+                    }
+
+                    if (newSongsToAdd.isEmpty()) {
+                        val fallbackQuery = "${lastSong.artist} top songs"
+                        val results = songSearchRepository.searchDomainSongs(fallbackQuery)
+                        newSongsToAdd = results.filter { song ->
+                            !playedSongIds.contains(song.id) && !playedSongTitles.contains(cleanTitle(song.title))
+                        }.take(3)
+                    }
+                    
+                    // Retry with pruned blacklist if completely empty
+                    if (newSongsToAdd.isEmpty()) {
+                        val retainCount = 40
+                        if (playedSongIds.size > retainCount) {
+                            val idsToKeep = playedSongIds.toList().takeLast(retainCount)
+                            playedSongIds.clear()
+                            playedSongIds.addAll(idsToKeep)
+                        }
+                        if (playedSongTitles.size > retainCount) {
+                            val titlesToKeep = playedSongTitles.toList().takeLast(retainCount)
+                            playedSongTitles.clear()
+                            playedSongTitles.addAll(titlesToKeep)
+                        }
+
+                        val snapshotTitlesRetry = playedSongTitles.toSet()
+                        val recommendationsRetry = songSearchRepository.getYouTubeRecommendations(lastSong.title, lastSong.artist, snapshotTitlesRetry)
+                        newSongsToAdd = recommendationsRetry.filter { song ->
+                            !playedSongIds.contains(song.id) && !playedSongTitles.contains(cleanTitle(song.title))
+                        }
+                        
+                        if (newSongsToAdd.isEmpty()) {
+                            val similarSongsRetry = songSearchRepository.getSimilarDomainSongs(lastSongId)
+                            newSongsToAdd = similarSongsRetry.filter { song ->
+                                !playedSongIds.contains(song.id) && !playedSongTitles.contains(cleanTitle(song.title))
+                            }.take(3)
+                        }
+
+                        if (newSongsToAdd.isEmpty()) {
+                            val fallbackQueryRetry = "${lastSong.artist} top songs"
+                            val resultsRetry = songSearchRepository.searchDomainSongs(fallbackQueryRetry)
+                            newSongsToAdd = resultsRetry.filter { song ->
+                                !playedSongIds.contains(song.id) && !playedSongTitles.contains(cleanTitle(song.title))
+                            }.take(3)
+                        }
+                    }
+
+                    // Final re-filter right before appending to catch anything added by a fast concurrent operation
+                    newSongsToAdd = newSongsToAdd.filter { song ->
+                        !playedSongIds.contains(song.id) && !playedSongTitles.contains(cleanTitle(song.title))
+                    }
+
+                    if (newSongsToAdd.isNotEmpty()) {
+                        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                            newSongsToAdd.forEach { 
+                                playedSongIds.add(it.id)
+                                playedSongTitles.add(cleanTitle(it.title))
+                            }
+                            val newQueue = queue + newSongsToAdd
+                            _currentQueue.value = newQueue
+                            audioPlayer.appendToQueue(newSongsToAdd)
+                        }
+                    }
+                } catch (e: Exception) {
+                    // Ignore
                 }
             }
         }

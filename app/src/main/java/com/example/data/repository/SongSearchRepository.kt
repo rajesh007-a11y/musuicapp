@@ -112,7 +112,7 @@ class SongSearchRepository(
     suspend fun getYouTubeRecommendations(
         currentTitle: String, 
         currentArtist: String,
-        blacklistTitles: MutableSet<String>
+        blacklistTitles: Set<String>
     ): List<Song> = withContext(Dispatchers.IO) {
         try {
             val pipedResponse = pipedApiService.searchYouTube("$currentTitle $currentArtist")
@@ -122,6 +122,7 @@ class SongSearchRepository(
             val topItems = pipedResponse.body()?.items?.filter { it.type == "stream" }?.take(20)?.shuffled().orEmpty()
             
             val recommendedSongs = mutableListOf<Song>()
+            val localBlacklist = blacklistTitles.toMutableSet()
             for (item in topItems) {
                 // 3. Pick 2-3 completely unique tracks
                 if (recommendedSongs.size >= 3) break
@@ -129,7 +130,7 @@ class SongSearchRepository(
                 val cleanPipedTitle = item.title.replace(Regex("\\(.*?\\)|\\[.*?\\]"), "").trim().lowercase()
                 
                 // 2. History Blacklist checking
-                if (blacklistTitles.any { cleanPipedTitle.contains(it) || it.contains(cleanPipedTitle) }) {
+                if (localBlacklist.any { cleanPipedTitle.contains(it) || it.contains(cleanPipedTitle) }) {
                     continue
                 }
 
@@ -138,12 +139,12 @@ class SongSearchRepository(
                 
                 val validSong = saavnResults.firstOrNull { saavnSong ->
                     val cleanSaavnTitle = saavnSong.title.replace(Regex("\\(.*?\\)|\\[.*?\\]"), "").trim().lowercase()
-                    !blacklistTitles.contains(cleanSaavnTitle)
+                    !localBlacklist.contains(cleanSaavnTitle)
                 }
                 
                 validSong?.let { 
                     recommendedSongs.add(it)
-                    blacklistTitles.add(it.title.replace(Regex("\\(.*?\\)|\\[.*?\\]"), "").trim().lowercase())
+                    localBlacklist.add(it.title.replace(Regex("\\(.*?\\)|\\[.*?\\]"), "").trim().lowercase())
                 }
             }
             recommendedSongs
