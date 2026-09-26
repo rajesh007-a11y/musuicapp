@@ -325,6 +325,46 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         val current = _currentSong.value
         val currentIndex = queue.indexOfFirst { it.id == current?.id }
 
+        if (currentIndex != -1 && currentIndex + 1 >= queue.size && !_isOfflineOnlyMode.value) {
+            // We reached the end of the queue, let's fetch an AI-recommended next song automatically!
+            _isDjThinking.value = true
+            viewModelScope.launch {
+                try {
+                    val fallbackQuery = current?.let { "${it.artist} ${it.genre} hits" } ?: "Top Bollywood hits"
+                    val topGenre = _tasteProfile.value.topGenres.firstOrNull()?.genre ?: "Pop"
+                    val nextQuery = if (current != null) {
+                        listOf(
+                            "${current.artist} best songs",
+                            "${current.genre} ${topGenre} hits",
+                            "${current.artist} new",
+                            "Similar to ${current.title} by ${current.artist}"
+                        ).random()
+                    } else {
+                        fallbackQuery
+                    }
+
+                    val results = songSearchRepository.searchDomainSongs(nextQuery)
+                    val nextSong = results.filter { it.id != current?.id }.randomOrNull()
+
+                    if (nextSong != null) {
+                        val newQueue = queue + nextSong
+                        _currentQueue.value = newQueue
+                        playSong(nextSong)
+                        _isDjThinking.value = false
+                        return@launch
+                    }
+                } catch (e: Exception) {
+                    // Ignored, fallback to normal logic
+                }
+                
+                _isDjThinking.value = false
+                // Fallback if AI fetch fails
+                val fallbackIndex = if (_isShuffle.value) queue.indices.random() else 0
+                playSong(queue.getOrNull(fallbackIndex) ?: queue.first())
+            }
+            return
+        }
+
         val nextIndex = if (_isShuffle.value) {
             queue.indices.random()
         } else {
