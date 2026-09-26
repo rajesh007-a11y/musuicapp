@@ -52,6 +52,8 @@ class SoundifyAudioPlayer(private val context: Context) {
 
     private var onSongCompletionListener: (() -> Unit)? = null
     private var onSongErrorListener: ((Song) -> Unit)? = null
+    private var onQueueEndApproachListener: (() -> Unit)? = null
+    private var onTrackChangedListener: ((String) -> Unit)? = null
 
     private val playerListener = object : Player.Listener {
         override fun onPlaybackStateChanged(playbackState: Int) {
@@ -68,6 +70,15 @@ class SoundifyAudioPlayer(private val context: Context) {
         override fun onIsPlayingChanged(isPlaying: Boolean) {
             _isPlaying.value = isPlaying
             if (isPlaying) startProgressTracker() else progressJob?.cancel()
+        }
+
+        override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+            super.onMediaItemTransition(mediaItem, reason)
+            mediaItem?.mediaId?.let { onTrackChangedListener?.invoke(it) }
+            
+            if (player.mediaItemCount > 0 && player.currentMediaItemIndex >= player.mediaItemCount - 2) {
+                onQueueEndApproachListener?.invoke()
+            }
         }
 
         override fun onPlayerError(error: PlaybackException) {
@@ -88,26 +99,56 @@ class SoundifyAudioPlayer(private val context: Context) {
         onSongErrorListener = listener
     }
 
-    fun playSong(song: Song) {
+    fun setOnQueueEndApproachListener(listener: () -> Unit) {
+        onQueueEndApproachListener = listener
+    }
+
+    fun setOnTrackChangedListener(listener: (String) -> Unit) {
+        onTrackChangedListener = listener
+    }
+
+    fun createMediaItem(song: Song): MediaItem {
         val localFile = song.localFilePath?.let { File(it) }
         val hasValidLocalFile = localFile != null && localFile.exists() && localFile.length() > 10_000
 
+        val metadata = MediaMetadata.Builder()
+            .setTitle(song.title)
+            .setArtist(song.artist)
+            .setArtworkUri(Uri.parse(song.albumArtUrl))
+            .build()
+
+        val uri = if (hasValidLocalFile) Uri.fromFile(localFile) else Uri.parse(song.audioUrl)
+        
+        return MediaItem.Builder()
+            .setMediaId(song.id)
+            .setUri(uri) // Ensure actual streaming URL is used here
+            .setMediaMetadata(metadata)
+            .build()
+    }
+
+    fun playQueue(queue: List<Song>, startIndex: Int = 0) {
         try {
-            val metadata = MediaMetadata.Builder()
-                .setTitle(song.title)
-                .setArtist(song.artist)
-                .setArtworkUri(Uri.parse(song.albumArtUrl))
-                .build()
+            val mediaItems = queue.map { createMediaItem(it) }
+            player.setMediaItems(mediaItems, startIndex, C.TIME_UNSET)
+            player.repeatMode = Player.REPEAT_MODE_OFF
+            player.prepare()
+            player.play()
 
-            val uri = if (hasValidLocalFile) Uri.fromFile(localFile) else Uri.parse(song.audioUrl)
-            
-            val mediaItem = MediaItem.Builder()
-                .setMediaId(song.id)
-                .setUri(uri)
-                .setMediaMetadata(metadata)
-                .build()
+            val intent = Intent(context, MusicPlaybackService::class.java)
+            ContextCompat.startForegroundService(context, intent)
+        } catch (e: Exception) {
+            Log.e("SoundifyAudioPlayer", "Failed to start ExoPlayer for queue", e)
+        }
+    }
 
-            player.setMediaItem(mediaItem)
+    fun appendToQueue(songs: List<Song>) {
+        val mediaItems = songs.map { createMediaItem(it) }
+        player.addMediaItems(mediaItems)
+    }
+
+    fun playSong(song: Song) {
+        try {
+            player.setMediaItem(createMediaItem(song))
             player.repeatMode = Player.REPEAT_MODE_OFF
             player.prepare()
             player.play()
@@ -149,6 +190,18 @@ class SoundifyAudioPlayer(private val context: Context) {
 
     fun togglePlayPause() {
         if (player.isPlaying) pause() else resume()
+    }
+
+    fun nextTrack() {
+        if (player.hasNextMediaItem()) {
+            player.seekToNextMediaItem()
+        }
+    }
+
+    fun previousTrack() {
+        if (player.hasPreviousMediaItem()) {
+            player.seekToPreviousMediaItem()
+        }
     }
 
     fun seekTo(positionMs: Long) {
