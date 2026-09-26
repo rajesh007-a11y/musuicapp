@@ -102,29 +102,29 @@ class MusicRepository(
             if (!downloadDir.exists()) downloadDir.mkdirs()
 
             val targetFile = File(downloadDir, "${song.id}.mp3")
-            // Download audio stream or write synthetic cache bytes
-            try {
-                val url = URL(song.audioUrl)
-                val connection = url.openConnection()
-                connection.connectTimeout = 8000
-                connection.readTimeout = 8000
-                connection.getInputStream().use { input ->
-                    FileOutputStream(targetFile).use { output ->
-                        input.copyTo(output)
-                    }
+
+            // Download actual audio stream from the real URL
+            val url = URL(song.audioUrl)
+            val connection = url.openConnection()
+            connection.connectTimeout = 10000
+            connection.readTimeout = 15000
+            connection.getInputStream().use { input ->
+                FileOutputStream(targetFile).use { output ->
+                    input.copyTo(output)
                 }
-            } catch (netEx: Exception) {
-                // If network fails, generate offline sound file so it can still be played offline reliably
-                if (!targetFile.exists()) {
-                    FileOutputStream(targetFile).use { out ->
-                        out.write("SOUNDIFY_OFFLINE_CACHE_AUDIO_${song.title}".toByteArray())
-                    }
-                }
+            }
+
+            // Verify the file is a real audio file (at least 10KB)
+            if (!targetFile.exists() || targetFile.length() < 10_000) {
+                // Not a valid audio file — clean up and report failure
+                if (targetFile.exists()) targetFile.delete()
+                return@withContext false
             }
 
             songDao.updateDownloadStatus(song.id, true, targetFile.absolutePath)
             true
         } catch (e: Exception) {
+            // Network failure or any other error — do NOT create fake placeholder files
             false
         }
     }

@@ -158,6 +158,7 @@ fun SoundifyApp(viewModel: MusicPlayerViewModel = viewModel()) {
                             searchQuery = viewModel.searchQuery.collectAsState().value,
                             searchResults = viewModel.searchResults.collectAsState().value,
                             allSongs = viewModel.allSongs.collectAsState().value,
+                            isSearchLoading = viewModel.isSearchLoading.collectAsState().value,
                             onQueryChanged = { viewModel.setSearchQuery(it) },
                             onSongClick = { song, queue -> viewModel.playSong(song, queue) },
                             onToggleFavorite = { viewModel.toggleFavorite(it) },

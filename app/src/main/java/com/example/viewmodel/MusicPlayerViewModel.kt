@@ -1,6 +1,7 @@
 package com.example.viewmodel
 
 import android.app.Application
+import android.content.Context
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.audio.SoundifyAudioPlayer
@@ -14,6 +15,8 @@ import com.example.data.model.EqualizerPreset
 import com.example.data.model.Song
 import com.example.data.model.TasteProfile
 import com.example.data.model.UserSettings
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import com.example.data.repository.MusicRepository
 import com.example.data.repository.SongSearchRepository
 import kotlinx.coroutines.Job
@@ -50,11 +53,10 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
 
     private val _fetchedHomeSongs = MutableStateFlow<List<Song>>(emptyList())
 
-    // Repository Flows
+    // Repository Flows — NO fallback to dummy CatalogData; show only real/fetched songs
     val allSongs: StateFlow<List<Song>> = combine(repository.allSongs, _fetchedHomeSongs) { db, fetched ->
-        val merged = (fetched + db).distinctBy { it.id }
-        if (merged.isEmpty()) CatalogData.initialSongs else merged
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), CatalogData.initialSongs)
+        (fetched + db).distinctBy { it.id }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val favoriteSongs: StateFlow<List<Song>> = repository.favoriteSongs.stateIn(
         viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList()
@@ -82,10 +84,10 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
     val durationMs: StateFlow<Long> = audioPlayer.durationMs
     val visualizerAmplitudes: StateFlow<List<Float>> = audioPlayer.visualizerAmplitudes
 
-    private val _currentSong = MutableStateFlow<Song?>(CatalogData.initialSongs.firstOrNull())
+    private val _currentSong = MutableStateFlow<Song?>(null)
     val currentSong: StateFlow<Song?> = _currentSong.asStateFlow()
 
-    private val _currentQueue = MutableStateFlow<List<Song>>(CatalogData.initialSongs)
+    private val _currentQueue = MutableStateFlow<List<Song>>(emptyList())
     val currentQueue: StateFlow<List<Song>> = _currentQueue.asStateFlow()
 
     private val _isShuffle = MutableStateFlow(false)
@@ -127,7 +129,7 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         } else {
             songs
         }
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), CatalogData.initialSongs)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val prioritizedPlaylists: StateFlow<List<PlaylistEntity>> = combine(allPlaylists, userSettings) { playlists, settings ->
         if (settings.prioritizeInDiscovery) {
@@ -170,6 +172,9 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
     private val _searchQuery = MutableStateFlow("")
     val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
 
+    private val _isSearchLoading = MutableStateFlow(false)
+    val isSearchLoading: StateFlow<Boolean> = _isSearchLoading.asStateFlow()
+
     val searchResults: StateFlow<List<Song>> = combine(allSongs, _saavnSearchResults, searchQuery) { localSongs, saavnSongs, query ->
         if (query.isBlank()) {
             emptyList()
@@ -210,6 +215,15 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
     init {
         audioPlayer.setOnCompletionListener {
             handleSongCompleted()
+        }
+
+        // When a song can't be played (no network, invalid file), skip to next
+        audioPlayer.setOnErrorListener { failedSong ->
+            android.util.Log.w("MusicPlayerVM", "Song failed to play: ${failedSong.title}, skipping...")
+            viewModelScope.launch {
+                delay(300) // Small delay to avoid rapid-fire skips
+                nextTrack()
+            }
         }
 
         // Initialize taste profile
@@ -255,13 +269,21 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         _searchQuery.value = query
         saavnSearchJob?.cancel()
         if (query.isNotBlank() && query.trim().length >= 2) {
+            _isSearchLoading.value = true
             saavnSearchJob = viewModelScope.launch {
-                delay(350)
-                val remoteSongs = songSearchRepository.searchDomainSongs(query.trim())
-                _saavnSearchResults.value = remoteSongs
+                delay(150) // Fast debounce for snappy results
+                try {
+                    val remoteSongs = songSearchRepository.searchDomainSongs(query.trim())
+                    _saavnSearchResults.value = remoteSongs
+                } catch (_: Exception) {
+                    // Network offline — keep whatever local results we have
+                } finally {
+                    _isSearchLoading.value = false
+                }
             }
         } else {
             _saavnSearchResults.value = emptyList()
+            _isSearchLoading.value = false
         }
     }
 
@@ -302,6 +324,15 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         if (!_isTtsVoiceEnabled.value) {
             djSpeaker.stop()
         }
+    }
+
+    /** Check if device currently has internet connectivity */
+    private fun isNetworkAvailable(): Boolean {
+        val cm = getApplication<Application>().getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+            ?: return false
+        val network = cm.activeNetwork ?: return false
+        val caps = cm.getNetworkCapabilities(network) ?: return false
+        return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
     }
 
     fun playSong(song: Song, queue: List<Song>? = null) {

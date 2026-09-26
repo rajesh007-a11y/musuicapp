@@ -1,5 +1,8 @@
 package com.example.ui.screens
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -27,6 +30,7 @@ import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.outlined.FavoriteBorder
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
@@ -80,6 +84,7 @@ fun SearchScreen(
     searchQuery: String,
     searchResults: List<Song>,
     allSongs: List<Song>,
+    isSearchLoading: Boolean,
     onQueryChanged: (String) -> Unit,
     onSongClick: (Song, List<Song>) -> Unit,
     onToggleFavorite: (Song) -> Unit,
@@ -117,7 +122,13 @@ fun SearchScreen(
                 )
             },
             trailingIcon = {
-                if (searchQuery.isNotBlank()) {
+                if (isSearchLoading) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(20.dp),
+                        color = SpotifyGreen,
+                        strokeWidth = 2.dp
+                    )
+                } else if (searchQuery.isNotBlank()) {
                     IconButton(onClick = { onQueryChanged("") }) {
                         Icon(
                             imageVector = Icons.Filled.Clear,
@@ -147,7 +158,7 @@ fun SearchScreen(
 
         if (searchQuery.isNotBlank()) {
             // Live Search Results
-            if (searchResults.isEmpty()) {
+            if (searchResults.isEmpty() && !isSearchLoading) {
                 Box(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center
@@ -164,6 +175,26 @@ fun SearchScreen(
                             text = "Check spelling or browse all categories",
                             color = TextSecondary,
                             fontSize = 13.sp
+                        )
+                    }
+                }
+            } else if (searchResults.isEmpty() && isSearchLoading) {
+                // Show centered loading spinner when no results yet but still loading
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        CircularProgressIndicator(
+                            color = SpotifyGreen,
+                            modifier = Modifier.size(36.dp),
+                            strokeWidth = 3.dp
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(
+                            text = "Searching \"$searchQuery\"...",
+                            color = TextSecondary,
+                            fontSize = 14.sp
                         )
                     }
                 }
