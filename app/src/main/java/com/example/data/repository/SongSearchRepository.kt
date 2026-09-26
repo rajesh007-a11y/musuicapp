@@ -16,7 +16,8 @@ data class TrackResult(
 )
 
 class SongSearchRepository(
-    private val apiService: JioSaavnApiService = JioSaavnApiService.create()
+    private val apiService: JioSaavnApiService = JioSaavnApiService.create(),
+    private val pipedApiService: com.example.data.remote.PipedApiService = com.example.data.remote.PipedApiService.create()
 ) {
 
     /**
@@ -94,6 +95,28 @@ class SongSearchRepository(
             if (!response.isSuccessful) return@withContext emptyList()
 
             response.body()?.data.orEmpty().mapNotNull { it.toDomainSong() }
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    /**
+     * Fetches YouTube recommendations and translates them to JioSaavn songs.
+     */
+    suspend fun getYouTubeRecommendations(currentTitle: String, currentArtist: String): List<Song> = withContext(Dispatchers.IO) {
+        try {
+            val pipedResponse = pipedApiService.searchYouTube("$currentTitle $currentArtist")
+            if (!pipedResponse.isSuccessful) return@withContext emptyList()
+
+            val topItems = pipedResponse.body()?.items?.filter { it.type == "stream" }?.take(2).orEmpty()
+            
+            val recommendedSongs = mutableListOf<Song>()
+            for (item in topItems) {
+                // Search JioSaavn silently for the recommended title
+                val saavnResults = searchDomainSongs(item.title)
+                saavnResults.firstOrNull()?.let { recommendedSongs.add(it) }
+            }
+            recommendedSongs
         } catch (_: Exception) {
             emptyList()
         }

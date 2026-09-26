@@ -6,11 +6,10 @@ import androidx.media3.session.MediaSessionService
 
 class MusicPlaybackService : MediaSessionService() {
     private var mediaSession: MediaSession? = null
-    private lateinit var player: ExoPlayer
 
     override fun onCreate() {
         super.onCreate()
-        player = ExoPlayer.Builder(this).build()
+        val player = com.example.audio.SoundifyAudioPlayer.getOrCreatePlayer(this)
         mediaSession = MediaSession.Builder(this, player).build()
     }
 
@@ -20,7 +19,6 @@ class MusicPlaybackService : MediaSessionService() {
 
     override fun onDestroy() {
         mediaSession?.run {
-            player.release()
             release()
             mediaSession = null
         }

@@ -390,36 +390,42 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
                     var newSongsToAdd: List<Song> = emptyList()
 
                     if (current != null) {
-                        val similarSongs = songSearchRepository.getSimilarDomainSongs(current.id)
+                        // Attempt YouTube recommendations first
+                        var recommendations = songSearchRepository.getYouTubeRecommendations(current.title, current.artist)
+                        newSongsToAdd = recommendations.filter { song -> !queue.any { it.id == song.id } }
                         
-                        // 1 & 2. Strict Filtering: Garbage Blacklist & Duplicate Prevention
-                        val blacklist = listOf("dj", "remix", "mix", "lofi", "slowed", "reverb", "8d", "mashup", "lo-fi", "instrumental")
-                        
-                        fun cleanTitle(t: String) = t.replace(Regex("\\(.*?\\)|\\[.*?\\]"), "").trim().lowercase()
-                        val queueTitles = queue.map { cleanTitle(it.title) }.toSet()
-                        
-                        val sanitized = similarSongs.filter { song ->
-                            val lowerTitle = song.title.lowercase()
-                            val lowerArtist = song.artist.lowercase()
-                            !blacklist.any { lowerTitle.contains(it) || lowerArtist.contains(it) }
-                        }
-                        
-                        val uniqueSongs = mutableListOf<Song>()
-                        val seenTitles = queueTitles.toMutableSet()
-                        
-                        for (song in sanitized) {
-                            val cTitle = cleanTitle(song.title)
-                            if (cTitle.isNotEmpty() && !seenTitles.contains(cTitle)) {
-                                seenTitles.add(cTitle)
-                                uniqueSongs.add(song)
+                        if (newSongsToAdd.isEmpty()) {
+                            val similarSongs = songSearchRepository.getSimilarDomainSongs(current.id)
+                            
+                            // 1 & 2. Strict Filtering: Garbage Blacklist & Duplicate Prevention
+                            val blacklist = listOf("dj", "remix", "mix", "lofi", "slowed", "reverb", "8d", "mashup", "lo-fi", "instrumental")
+                            
+                            fun cleanTitle(t: String) = t.replace(Regex("\\(.*?\\)|\\[.*?\\]"), "").trim().lowercase()
+                            val queueTitles = queue.map { cleanTitle(it.title) }.toSet()
+                            
+                            val sanitized = similarSongs.filter { song ->
+                                val lowerTitle = song.title.lowercase()
+                                val lowerArtist = song.artist.lowercase()
+                                !blacklist.any { lowerTitle.contains(it) || lowerArtist.contains(it) }
                             }
-                        }
-                        
-                        // 3. Primary Artist Prioritization
-                        val currentArtists = current.artist.lowercase().split(",").map { it.trim() }.filter { it.isNotEmpty() }
-                        newSongsToAdd = uniqueSongs.sortedByDescending { song ->
-                            val songArtist = song.artist.lowercase()
-                            if (currentArtists.any { songArtist.contains(it) }) 1 else 0
+                            
+                            val uniqueSongs = mutableListOf<Song>()
+                            val seenTitles = queueTitles.toMutableSet()
+                            
+                            for (song in sanitized) {
+                                val cTitle = cleanTitle(song.title)
+                                if (cTitle.isNotEmpty() && !seenTitles.contains(cTitle)) {
+                                    seenTitles.add(cTitle)
+                                    uniqueSongs.add(song)
+                                }
+                            }
+                            
+                            // 3. Primary Artist Prioritization
+                            val currentArtists = current.artist.lowercase().split(",").map { it.trim() }.filter { it.isNotEmpty() }
+                            newSongsToAdd = uniqueSongs.sortedByDescending { song ->
+                                val songArtist = song.artist.lowercase()
+                                if (currentArtists.any { songArtist.contains(it) }) 1 else 0
+                            }
                         }
                     }
 
