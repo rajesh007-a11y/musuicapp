@@ -335,6 +335,10 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
     }
 
+    private fun cleanTitle(t: String) = t.replace(Regex("\\(.*?\\)|\\[.*?\\]"), "").trim().lowercase()
+    private val playedTrackTitles = mutableSetOf<String>()
+    private var isPrefetching = false
+
     fun playSong(song: Song, queue: List<Song>? = null) {
         if (_isOfflineOnlyMode.value && !song.isDownloaded) {
             return
@@ -355,12 +359,14 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
 
         _currentSong.value = song
         songStartTimeMs = System.currentTimeMillis()
+        playedTrackTitles.add(cleanTitle(song.title))
 
         if (queue != null) {
             _currentQueue.value = queue
         }
 
         audioPlayer.playSong(song)
+        checkAndPrefetchNextSongs()
     }
 
     fun togglePlayPause() {
@@ -382,104 +388,91 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         val current = _currentSong.value
         val currentIndex = queue.indexOfFirst { it.id == current?.id }
 
-        if (currentIndex != -1 && currentIndex + 1 >= queue.size && !_isOfflineOnlyMode.value) {
-            // We reached the end of the queue, let's fetch an AI-recommended next song automatically!
-            _isDjThinking.value = true
-            viewModelScope.launch {
+        if (currentIndex != -1 && currentIndex + 1 < queue.size) {
+            // Pre-fetched song plays instantly (zero-lag)
+            val nextIndex = if (_isShuffle.value) queue.indices.random() else currentIndex + 1
+            playSong(queue[nextIndex])
+        } else {
+            // Queue is exhausted (if prefetch failed or didn't finish in time), fallback
+            val fallbackIndex = if (_isShuffle.value) queue.indices.random() else 0
+            playSong(queue.getOrNull(fallbackIndex) ?: queue.first())
+        }
+    }
+
+    private fun checkAndPrefetchNextSongs() {
+        if (_isOfflineOnlyMode.value) return
+        val current = _currentSong.value ?: return
+        val queue = _currentQueue.value
+        val currentIndex = queue.indexOfFirst { it.id == current.id }
+        
+        // Fetch background recommendations early (when we hit the second-to-last song)
+        if (currentIndex != -1 && currentIndex + 1 >= queue.size - 1 && !isPrefetching) {
+            isPrefetching = true
+            
+            viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
                 try {
+                    val historyBlacklist = mutableSetOf<String>()
+                    historyBlacklist.addAll(playedTrackTitles)
+                    queue.forEach { historyBlacklist.add(cleanTitle(it.title)) }
+                    recentlyPlayed.value.forEach { historyBlacklist.add(cleanTitle(it.title)) }
+
                     var newSongsToAdd: List<Song> = emptyList()
-
-                    if (current != null) {
-                        // Build History Blacklist (Queue + Recently Played)
-                        fun cleanTitle(t: String) = t.replace(Regex("\\(.*?\\)|\\[.*?\\]"), "").trim().lowercase()
+                    var recommendations = songSearchRepository.getYouTubeRecommendations(current.title, current.artist, historyBlacklist)
+                    newSongsToAdd = recommendations.filter { song -> !queue.any { it.id == song.id } }
+                    
+                    if (newSongsToAdd.isEmpty()) {
+                        val similarSongs = songSearchRepository.getSimilarDomainSongs(current.id)
+                        val blacklist = listOf("dj", "remix", "mix", "lofi", "slowed", "reverb", "8d", "mashup", "lo-fi", "instrumental")
                         
-                        val historyBlacklist = mutableSetOf<String>()
-                        queue.forEach { historyBlacklist.add(cleanTitle(it.title)) }
-                        recentlyPlayed.value.forEach { historyBlacklist.add(cleanTitle(it.title)) }
-
-                        // Attempt YouTube recommendations first
-                        var recommendations = songSearchRepository.getYouTubeRecommendations(current.title, current.artist, historyBlacklist)
-                        newSongsToAdd = recommendations.filter { song -> !queue.any { it.id == song.id } }
+                        val sanitized = similarSongs.filter { song ->
+                            val lowerTitle = song.title.lowercase()
+                            val lowerArtist = song.artist.lowercase()
+                            !blacklist.any { lowerTitle.contains(it) || lowerArtist.contains(it) }
+                        }
                         
-                        if (newSongsToAdd.isEmpty()) {
-                            val similarSongs = songSearchRepository.getSimilarDomainSongs(current.id)
+                        val uniqueSongs = mutableListOf<Song>()
+                        for (song in sanitized) {
+                            if (uniqueSongs.size >= 3) break
                             
-                            // 1 & 2. Strict Filtering: Garbage Blacklist & Duplicate Prevention
-                            val blacklist = listOf("dj", "remix", "mix", "lofi", "slowed", "reverb", "8d", "mashup", "lo-fi", "instrumental")
-                            
-                            val sanitized = similarSongs.filter { song ->
-                                val lowerTitle = song.title.lowercase()
-                                val lowerArtist = song.artist.lowercase()
-                                !blacklist.any { lowerTitle.contains(it) || lowerArtist.contains(it) }
+                            val cTitle = cleanTitle(song.title)
+                            if (cTitle.isNotEmpty() && !historyBlacklist.contains(cTitle) && !queue.any { it.id == song.id }) {
+                                historyBlacklist.add(cTitle)
+                                uniqueSongs.add(song)
                             }
-                            
-                            val uniqueSongs = mutableListOf<Song>()
-                            
-                            for (song in sanitized) {
-                                if (uniqueSongs.size >= 3) break // Pick 2-3 tracks
-                                
-                                val cTitle = cleanTitle(song.title)
-                                if (cTitle.isNotEmpty() && !historyBlacklist.contains(cTitle) && !queue.any { it.id == song.id }) {
-                                    historyBlacklist.add(cTitle)
-                                    uniqueSongs.add(song)
-                                }
-                            }
-                            
-                            // 3. Primary Artist Prioritization
-                            val currentArtists = current.artist.lowercase().split(",").map { it.trim() }.filter { it.isNotEmpty() }
-                            newSongsToAdd = uniqueSongs.sortedByDescending { song ->
-                                val songArtist = song.artist.lowercase()
-                                if (currentArtists.any { songArtist.contains(it) }) 1 else 0
-                            }
+                        }
+                        
+                        val currentArtists = current.artist.lowercase().split(",").map { it.trim() }.filter { it.isNotEmpty() }
+                        newSongsToAdd = uniqueSongs.sortedByDescending { song ->
+                            val songArtist = song.artist.lowercase()
+                            if (currentArtists.any { songArtist.contains(it) }) 1 else 0
                         }
                     }
 
                     if (newSongsToAdd.isEmpty()) {
-                        // Fallback to old search method
-                        val fallbackQuery = current?.let { "${it.artist} ${it.genre} hits" } ?: "Top Bollywood hits"
-                        val topGenre = _tasteProfile.value.topGenres.firstOrNull()?.genre ?: "Pop"
-                        val nextQuery = if (current != null) {
-                            listOf(
-                                "${current.artist} best songs",
-                                "${current.genre} ${topGenre} hits",
-                                "${current.artist} new",
-                                "Similar to ${current.title} by ${current.artist}"
-                            ).random()
-                        } else {
-                            fallbackQuery
-                        }
-
-                        val results = songSearchRepository.searchDomainSongs(nextQuery)
-                        newSongsToAdd = results.filter { song -> !queue.any { it.id == song.id } }
+                        val fallbackQuery = current.let { "${it.artist} best songs" }
+                        val results = songSearchRepository.searchDomainSongs(fallbackQuery)
+                        newSongsToAdd = results.filter { song -> 
+                            val cTitle = cleanTitle(song.title)
+                            !historyBlacklist.contains(cTitle) && !queue.any { it.id == song.id }
+                        }.take(3)
                     }
 
                     if (newSongsToAdd.isNotEmpty()) {
-                        val newQueue = queue + newSongsToAdd
-                        _currentQueue.value = newQueue
-                        playSong(newSongsToAdd.first())
-                        _isDjThinking.value = false
-                        return@launch
+                        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                            newSongsToAdd.forEach { playedTrackTitles.add(cleanTitle(it.title)) }
+                            val newQueue = queue + newSongsToAdd
+                            _currentQueue.value = newQueue
+                        }
                     }
                 } catch (e: Exception) {
-                    // Ignored, fallback to normal logic
+                    // Ignore
+                } finally {
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                        isPrefetching = false
+                    }
                 }
-                
-                _isDjThinking.value = false
-                // Fallback if AI fetch fails
-                val fallbackIndex = if (_isShuffle.value) queue.indices.random() else 0
-                playSong(queue.getOrNull(fallbackIndex) ?: queue.first())
             }
-            return
         }
-
-        val nextIndex = if (_isShuffle.value) {
-            queue.indices.random()
-        } else {
-            if (currentIndex + 1 < queue.size) currentIndex + 1 else 0
-        }
-
-        val nextSong = queue.getOrNull(nextIndex) ?: queue.first()
-        playSong(nextSong)
     }
 
     fun previousTrack() {
