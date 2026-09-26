@@ -77,7 +77,9 @@ class SongSearchRepository(
             val response = apiService.searchSongs(query = query)
             if (!response.isSuccessful) return@withContext emptyList()
 
-            response.body()?.data?.results.orEmpty().mapNotNull { it.toDomainSong() }
+            response.body()?.data?.results.orEmpty()
+                .mapNotNull { it.toDomainSong() }
+                .applyAggressiveQualityFilter()
         } catch (_: Exception) {
             emptyList()
         }
@@ -94,8 +96,11 @@ class SongSearchRepository(
             val response = apiService.getSimilarSongs(id = cleanId)
             if (!response.isSuccessful) return@withContext emptyList()
 
-            // Shuffle the results to avoid echo chamber loop
-            response.body()?.data.orEmpty().mapNotNull { it.toDomainSong() }.shuffled()
+            // Shuffle the results to avoid echo chamber loop, and aggressively filter fakes
+            response.body()?.data.orEmpty()
+                .mapNotNull { it.toDomainSong() }
+                .applyAggressiveQualityFilter()
+                .shuffled()
         } catch (_: Exception) {
             emptyList()
         }
@@ -144,6 +149,41 @@ class SongSearchRepository(
             recommendedSongs
         } catch (_: Exception) {
             emptyList()
+        }
+    }
+
+    /**
+     * AGGRESSIVE QUALITY FILTER
+     * Drops fake tracks, generic EDM loops, and remixes based on keywords, duration, and album names.
+     */
+    private fun List<Song>.applyAggressiveQualityFilter(): List<Song> {
+        val spamKeywords = listOf(
+            "remix", "dj", "instrumental", "cover", "lofi", "slowed", "reverb", "8d", 
+            "mashup", "bgm", "karaoke", "version", "mix", "soundify", "trance", "techno", "bass boosted"
+        )
+        val spamAlbums = listOf("hot hits", "happy vibes")
+
+        return this.filter { song ->
+            val title = song.title.lowercase()
+            val artist = song.artist.lowercase()
+            val album = song.album.lowercase()
+
+            // 1. RUTHLESS KEYWORD BLACKLIST
+            val hasSpamKeyword = spamKeywords.any { keyword ->
+                title.contains(keyword) || artist.contains(keyword) || album.contains(keyword)
+            }
+            if (hasSpamKeyword) return@filter false
+
+            // 2. DURATION FILTER (Between 120s and 330s)
+            val durationSeconds = song.durationMs / 1000
+            if (durationSeconds < 120 || durationSeconds > 330) return@filter false
+
+            // 3. OFFICIAL LABEL/ALBUM CHECK
+            if (album.isBlank()) return@filter false
+            val isSpamAlbum = spamAlbums.any { album.contains(it) }
+            if (isSpamAlbum) return@filter false
+
+            true
         }
     }
 }
