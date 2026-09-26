@@ -206,7 +206,7 @@ fun SearchScreen(
                     items(searchResults) { song ->
                         SearchResultRow(
                             song = song,
-                            onClick = { onSongClick(song, searchResults) },
+                            onClick = { onSongClick(song, listOf(song)) },
                             onToggleFavorite = { onToggleFavorite(song) },
                             onDownloadSong = { onDownloadSong(song) }
                         )

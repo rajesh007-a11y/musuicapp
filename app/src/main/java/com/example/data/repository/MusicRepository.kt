@@ -58,6 +58,7 @@ class MusicRepository(
     }
 
     suspend fun toggleFavorite(song: Song) = withContext(Dispatchers.IO) {
+        songDao.insertSongIfNotExists(SongEntity.fromSong(song))
         val newFav = !song.isFavorite
         songDao.updateFavorite(song.id, newFav)
     }
@@ -68,6 +69,7 @@ class MusicRepository(
         wasCompleted: Boolean,
         wasSkipped: Boolean
     ) = withContext(Dispatchers.IO) {
+        songDao.insertSongIfNotExists(SongEntity.fromSong(song))
         val now = System.currentTimeMillis()
         songDao.recordPlay(song.id, now)
 
@@ -97,6 +99,7 @@ class MusicRepository(
     }
 
     suspend fun downloadSong(song: Song, context: Context): Boolean = withContext(Dispatchers.IO) {
+        songDao.insertSongIfNotExists(SongEntity.fromSong(song))
         try {
             val downloadDir = File(context.filesDir, "soundify_offline_audio")
             if (!downloadDir.exists()) downloadDir.mkdirs()

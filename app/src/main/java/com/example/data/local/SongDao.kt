@@ -36,6 +36,9 @@ interface SongDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertSong(song: SongEntity)
 
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertSongIfNotExists(song: SongEntity)
+
     @Update
     suspend fun updateSong(song: SongEntity)
 
