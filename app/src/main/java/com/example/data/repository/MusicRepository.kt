@@ -235,7 +235,7 @@ class MusicRepository(
         prioritizeLanguages: Boolean = true
     ): List<Song> = withContext(Dispatchers.IO) {
         val all = songDao.getAllSongs().map { it.toSong() }
-        if (all.isEmpty()) return@withContext CatalogData.initialSongs
+        if (all.isEmpty()) return@withContext emptyList()
 
         // Sort songs based on proximity to vibe energy and valence + language priority bonus
         return@withContext all.sortedBy { song ->

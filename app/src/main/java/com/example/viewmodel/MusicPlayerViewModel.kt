@@ -242,13 +242,13 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
                 val combined = (results1 + results2).distinctBy { it.id }.shuffled()
                 if (combined.isNotEmpty()) {
                     _fetchedHomeSongs.value = combined
-                    if (_currentQueue.value.isEmpty() || _currentQueue.value == CatalogData.initialSongs) {
+                    if (_currentQueue.value.isEmpty()) {
                         _currentQueue.value = combined
                         _currentSong.value = combined.first()
                     }
                 }
             } catch (e: Exception) {
-                // Keep dummy data if fetch fails
+                // Ignore
             }
         }
     }
@@ -393,9 +393,60 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
             val nextIndex = if (_isShuffle.value) queue.indices.random() else currentIndex + 1
             playSong(queue[nextIndex])
         } else {
-            // Queue is exhausted (if prefetch failed or didn't finish in time), fallback
-            val fallbackIndex = if (_isShuffle.value) queue.indices.random() else 0
-            playSong(queue.getOrNull(fallbackIndex) ?: queue.first())
+            // Queue is exhausted. DO NOT loop back to 0. Force fetch and play next!
+            _isDjThinking.value = true
+            viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                forceFetchAndPlayNext(current)
+            }
+        }
+    }
+
+    private suspend fun forceFetchAndPlayNext(current: Song?) {
+        if (current == null) return
+        val queue = _currentQueue.value
+        try {
+            val historyBlacklist = mutableSetOf<String>()
+            historyBlacklist.addAll(playedTrackTitles)
+            queue.forEach { historyBlacklist.add(cleanTitle(it.title)) }
+            recentlyPlayed.value.forEach { historyBlacklist.add(cleanTitle(it.title)) }
+            
+            var newSongsToAdd: List<Song> = emptyList()
+            var recommendations = songSearchRepository.getYouTubeRecommendations(current.title, current.artist, historyBlacklist)
+            newSongsToAdd = recommendations.filter { song -> !queue.any { it.id == song.id } }
+            
+            if (newSongsToAdd.isEmpty()) {
+                val similarSongs = songSearchRepository.getSimilarDomainSongs(current.id)
+                newSongsToAdd = similarSongs.filter { song -> !historyBlacklist.contains(cleanTitle(song.title)) && !queue.any { it.id == song.id } }.take(3)
+            }
+            if (newSongsToAdd.isEmpty()) {
+                val fallbackQuery = "${current.artist} best songs"
+                val results = songSearchRepository.searchDomainSongs(fallbackQuery)
+                newSongsToAdd = results.filter { song -> !historyBlacklist.contains(cleanTitle(song.title)) && !queue.any { it.id == song.id } }.take(3)
+            }
+            
+            if (newSongsToAdd.isNotEmpty()) {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                    newSongsToAdd.forEach { playedTrackTitles.add(cleanTitle(it.title)) }
+                    val newQueue = queue + newSongsToAdd
+                    _currentQueue.value = newQueue
+                    playSong(newSongsToAdd.first())
+                }
+            } else {
+                // If completely failed, only then fallback to 0
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                    val fallbackIndex = if (_isShuffle.value) queue.indices.random() else 0
+                    playSong(queue.getOrNull(fallbackIndex) ?: queue.first())
+                }
+            }
+        } catch (e: Exception) {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                val fallbackIndex = if (_isShuffle.value) queue.indices.random() else 0
+                playSong(queue.getOrNull(fallbackIndex) ?: queue.first())
+            }
+        } finally {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                _isDjThinking.value = false
+            }
         }
     }
 

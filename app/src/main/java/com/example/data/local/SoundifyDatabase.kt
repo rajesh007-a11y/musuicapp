@@ -56,8 +56,7 @@ abstract class SoundifyDatabase : RoomDatabase() {
         private fun seedData(database: SoundifyDatabase, coroutineScope: CoroutineScope) {
             coroutineScope.launch(Dispatchers.IO) {
                 try {
-                    val songEntities = CatalogData.initialSongs.map { SongEntity.fromSong(it) }
-                    database.songDao().insertSongs(songEntities)
+                    // database.songDao().insertSongs(songEntities)
                     database.playlistDao().insertPlaylists(CatalogData.initialPlaylists)
 
                     if (database.listeningDao().getTotalEventsCount() < 3) {

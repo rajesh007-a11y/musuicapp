@@ -108,6 +108,7 @@ class SoundifyAudioPlayer(private val context: Context) {
                 .build()
 
             player.setMediaItem(mediaItem)
+            player.repeatMode = Player.REPEAT_MODE_OFF
             player.prepare()
             player.play()
 
