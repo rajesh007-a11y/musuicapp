@@ -48,10 +48,13 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
     private val audioPlayer = SoundifyAudioPlayer(application)
     private val djSpeaker = TtsDjSpeaker(application)
 
+    private val _fetchedHomeSongs = MutableStateFlow<List<Song>>(emptyList())
+
     // Repository Flows
-    val allSongs: StateFlow<List<Song>> = repository.allSongs.stateIn(
-        viewModelScope, SharingStarted.WhileSubscribed(5000), CatalogData.initialSongs
-    )
+    val allSongs: StateFlow<List<Song>> = combine(repository.allSongs, _fetchedHomeSongs) { db, fetched ->
+        val merged = (fetched + db).distinctBy { it.id }
+        if (merged.isEmpty()) CatalogData.initialSongs else merged
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), CatalogData.initialSongs)
 
     val favoriteSongs: StateFlow<List<Song>> = repository.favoriteSongs.stateIn(
         viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList()
@@ -211,6 +214,29 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
 
         // Initialize taste profile
         refreshTasteProfile()
+        
+        // Fetch real trending/top songs for the Home Screen instead of dummy data
+        fetchTrendingHomeSongs()
+    }
+
+    private fun fetchTrendingHomeSongs() {
+        viewModelScope.launch {
+            try {
+                // Fetch top trending Hindi/Bollywood hits
+                val results1 = songSearchRepository.searchDomainSongs("Top Bollywood")
+                val results2 = songSearchRepository.searchDomainSongs("Trending English")
+                val combined = (results1 + results2).distinctBy { it.id }.shuffled()
+                if (combined.isNotEmpty()) {
+                    _fetchedHomeSongs.value = combined
+                    if (_currentQueue.value.isEmpty() || _currentQueue.value == CatalogData.initialSongs) {
+                        _currentQueue.value = combined
+                        _currentSong.value = combined.first()
+                    }
+                }
+            } catch (e: Exception) {
+                // Keep dummy data if fetch fails
+            }
+        }
     }
 
     fun setTab(tab: NavigationTab) {
