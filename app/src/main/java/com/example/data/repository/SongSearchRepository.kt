@@ -94,27 +94,52 @@ class SongSearchRepository(
             val response = apiService.getSimilarSongs(id = cleanId)
             if (!response.isSuccessful) return@withContext emptyList()
 
-            response.body()?.data.orEmpty().mapNotNull { it.toDomainSong() }
+            // Shuffle the results to avoid echo chamber loop
+            response.body()?.data.orEmpty().mapNotNull { it.toDomainSong() }.shuffled()
         } catch (_: Exception) {
             emptyList()
         }
     }
 
     /**
-     * Fetches YouTube recommendations and translates them to JioSaavn songs.
+     * Fetches YouTube recommendations and translates them to JioSaavn songs with strict blacklist checking.
      */
-    suspend fun getYouTubeRecommendations(currentTitle: String, currentArtist: String): List<Song> = withContext(Dispatchers.IO) {
+    suspend fun getYouTubeRecommendations(
+        currentTitle: String, 
+        currentArtist: String,
+        blacklistTitles: MutableSet<String>
+    ): List<Song> = withContext(Dispatchers.IO) {
         try {
             val pipedResponse = pipedApiService.searchYouTube("$currentTitle $currentArtist")
             if (!pipedResponse.isSuccessful) return@withContext emptyList()
 
-            val topItems = pipedResponse.body()?.items?.filter { it.type == "stream" }?.take(2).orEmpty()
+            // 1. Fetch at least 15-20 results and shuffle them
+            val topItems = pipedResponse.body()?.items?.filter { it.type == "stream" }?.take(20)?.shuffled().orEmpty()
             
             val recommendedSongs = mutableListOf<Song>()
             for (item in topItems) {
+                // 3. Pick 2-3 completely unique tracks
+                if (recommendedSongs.size >= 3) break
+                
+                val cleanPipedTitle = item.title.replace(Regex("\\(.*?\\)|\\[.*?\\]"), "").trim().lowercase()
+                
+                // 2. History Blacklist checking
+                if (blacklistTitles.any { cleanPipedTitle.contains(it) || it.contains(cleanPipedTitle) }) {
+                    continue
+                }
+
                 // Search JioSaavn silently for the recommended title
                 val saavnResults = searchDomainSongs(item.title)
-                saavnResults.firstOrNull()?.let { recommendedSongs.add(it) }
+                
+                val validSong = saavnResults.firstOrNull { saavnSong ->
+                    val cleanSaavnTitle = saavnSong.title.replace(Regex("\\(.*?\\)|\\[.*?\\]"), "").trim().lowercase()
+                    !blacklistTitles.contains(cleanSaavnTitle)
+                }
+                
+                validSong?.let { 
+                    recommendedSongs.add(it)
+                    blacklistTitles.add(it.title.replace(Regex("\\(.*?\\)|\\[.*?\\]"), "").trim().lowercase())
+                }
             }
             recommendedSongs
         } catch (_: Exception) {

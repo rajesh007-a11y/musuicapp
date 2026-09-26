@@ -37,6 +37,8 @@ import com.example.viewmodel.MusicPlayerViewModel
 import com.example.viewmodel.NavigationTab
 
 class MainActivity : ComponentActivity() {
+    private var controllerFuture: com.google.common.util.concurrent.ListenableFuture<androidx.media3.session.MediaController>? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
@@ -64,6 +66,25 @@ class MainActivity : ComponentActivity() {
                     SoundifyApp()
                 }
             }
+        }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        val sessionToken = androidx.media3.session.SessionToken(
+            this,
+            android.content.ComponentName(this, com.example.service.MusicPlaybackService::class.java)
+        )
+        controllerFuture = androidx.media3.session.MediaController.Builder(this, sessionToken).buildAsync()
+        controllerFuture?.addListener({
+            // Controller connection established. Media3 automatically syncs UI with Service.
+        }, androidx.core.content.ContextCompat.getMainExecutor(this))
+    }
+
+    override fun onStop() {
+        super.onStop()
+        controllerFuture?.let {
+            androidx.media3.session.MediaController.releaseFuture(it)
         }
     }
 }

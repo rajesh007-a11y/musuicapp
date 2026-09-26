@@ -390,8 +390,15 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
                     var newSongsToAdd: List<Song> = emptyList()
 
                     if (current != null) {
+                        // Build History Blacklist (Queue + Recently Played)
+                        fun cleanTitle(t: String) = t.replace(Regex("\\(.*?\\)|\\[.*?\\]"), "").trim().lowercase()
+                        
+                        val historyBlacklist = mutableSetOf<String>()
+                        queue.forEach { historyBlacklist.add(cleanTitle(it.title)) }
+                        recentlyPlayed.value.forEach { historyBlacklist.add(cleanTitle(it.title)) }
+
                         // Attempt YouTube recommendations first
-                        var recommendations = songSearchRepository.getYouTubeRecommendations(current.title, current.artist)
+                        var recommendations = songSearchRepository.getYouTubeRecommendations(current.title, current.artist, historyBlacklist)
                         newSongsToAdd = recommendations.filter { song -> !queue.any { it.id == song.id } }
                         
                         if (newSongsToAdd.isEmpty()) {
@@ -400,9 +407,6 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
                             // 1 & 2. Strict Filtering: Garbage Blacklist & Duplicate Prevention
                             val blacklist = listOf("dj", "remix", "mix", "lofi", "slowed", "reverb", "8d", "mashup", "lo-fi", "instrumental")
                             
-                            fun cleanTitle(t: String) = t.replace(Regex("\\(.*?\\)|\\[.*?\\]"), "").trim().lowercase()
-                            val queueTitles = queue.map { cleanTitle(it.title) }.toSet()
-                            
                             val sanitized = similarSongs.filter { song ->
                                 val lowerTitle = song.title.lowercase()
                                 val lowerArtist = song.artist.lowercase()
@@ -410,12 +414,13 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
                             }
                             
                             val uniqueSongs = mutableListOf<Song>()
-                            val seenTitles = queueTitles.toMutableSet()
                             
                             for (song in sanitized) {
+                                if (uniqueSongs.size >= 3) break // Pick 2-3 tracks
+                                
                                 val cTitle = cleanTitle(song.title)
-                                if (cTitle.isNotEmpty() && !seenTitles.contains(cTitle)) {
-                                    seenTitles.add(cTitle)
+                                if (cTitle.isNotEmpty() && !historyBlacklist.contains(cTitle) && !queue.any { it.id == song.id }) {
+                                    historyBlacklist.add(cTitle)
                                     uniqueSongs.add(song)
                                 }
                             }
