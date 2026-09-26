@@ -23,7 +23,7 @@ interface JioSaavnApiService {
     ): Response<SaavnSearchResponse>
 
     companion object {
-        private const val DEFAULT_BASE_URL = "https://musicapp-nu.vercel.app/"
+        private const val DEFAULT_BASE_URL = "https://jiosaavn-api-jnlz.onrender.com/"
 
         fun create(
             apiKey: String = try { BuildConfig.JIOSAAVN_API_KEY } catch (_: Exception) { "" },

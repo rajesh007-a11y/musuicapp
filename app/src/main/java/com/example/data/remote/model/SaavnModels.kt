@@ -21,7 +21,7 @@ data class SaavnSearchData(
 data class SaavnSongItem(
     @Json(name = "id") val id: String,
     @Json(name = "name") val title: String,
-    @Json(name = "primaryArtists") val primaryArtists: String? = null,
+    @Json(name = "artists") val artists: SaavnArtistsObj? = null,
     @Json(name = "album") val album: SaavnAlbumInfo? = null,
     @Json(name = "year") val year: String? = null,
     @Json(name = "duration") val durationSeconds: Int? = null,
@@ -57,10 +57,11 @@ data class SaavnSongItem(
             .replace("&#039;", "'")
             .replace("&amp;", "&")
 
-        val cleanArtist = primaryArtists
-            ?.replace("&amp;", "&")
-            ?.replace("&#039;", "'")
-            ?.ifBlank { "Various Artists" } ?: "Various Artists"
+        val primaryArtistNames = artists?.primary?.mapNotNull { it.name }?.joinToString(", ") ?: "Various Artists"
+        val cleanArtist = primaryArtistNames
+            .replace("&amp;", "&")
+            .replace("&#039;", "'")
+            .ifBlank { "Various Artists" }
 
         val cleanAlbum = album?.name
             ?.replace("&quot;", "\"")
@@ -96,4 +97,15 @@ data class SaavnAlbumInfo(
 data class SaavnMediaPayload(
     @Json(name = "quality") val quality: String,
     @Json(name = "url") val url: String
+)
+
+@JsonClass(generateAdapter = true)
+data class SaavnArtistsObj(
+    @Json(name = "primary") val primary: List<SaavnArtistInfo> = emptyList()
+)
+
+@JsonClass(generateAdapter = true)
+data class SaavnArtistInfo(
+    @Json(name = "id") val id: String? = null,
+    @Json(name = "name") val name: String? = null
 )
