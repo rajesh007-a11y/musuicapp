@@ -33,7 +33,7 @@ data class SaavnSongItem(
      * Resolves the highest resolution album art (prefers 500x500).
      */
     fun getHighResAlbumArt(): String? {
-        return imageList.find { it.quality.equals("500x500", ignoreCase = true) }?.url
+        return imageList.find { it.quality?.equals("500x500", ignoreCase = true) == true }?.url
             ?: imageList.lastOrNull()?.url
     }
 
@@ -41,9 +41,9 @@ data class SaavnSongItem(
      * Resolves the highest quality direct stream link (prefers 320kbps, then 160kbps).
      */
     fun get320KbpsStreamingUrl(): String? {
-        return downloadUrlList.find { it.quality.equals("320kbps", ignoreCase = true) }?.url
-            ?: downloadUrlList.find { it.quality.equals("160kbps", ignoreCase = true) }?.url
-            ?: downloadUrlList.find { it.quality.equals("96kbps", ignoreCase = true) }?.url
+        return downloadUrlList.find { it.quality?.equals("320kbps", ignoreCase = true) == true }?.url
+            ?: downloadUrlList.find { it.quality?.equals("160kbps", ignoreCase = true) == true }?.url
+            ?: downloadUrlList.find { it.quality?.equals("96kbps", ignoreCase = true) == true }?.url
             ?: downloadUrlList.lastOrNull()?.url
     }
 
@@ -95,8 +95,8 @@ data class SaavnAlbumInfo(
 
 @JsonClass(generateAdapter = true)
 data class SaavnMediaPayload(
-    @Json(name = "quality") val quality: String,
-    @Json(name = "url") val url: String
+    @Json(name = "quality") val quality: String? = null,
+    @Json(name = "url") val url: String? = null
 )
 
 @JsonClass(generateAdapter = true)
