@@ -43,7 +43,7 @@ class SongSearchRepository(
                         .replace("&quot;", "\"")
                         .replace("&#039;", "'")
                         .replace("&amp;", "&"),
-                    artist = item.primaryArtists
+                    artist = item.artists?.primary?.mapNotNull { it.name }?.joinToString(", ")
                         ?.replace("&amp;", "&")
                         ?.replace("&#039;", "'")
                         ?.ifBlank { "Unknown Artist" } ?: "Unknown Artist",

@@ -112,23 +112,28 @@ fun SoundifyApp(viewModel: MusicPlayerViewModel = viewModel()) {
             if (isSettingsOpen) {
                 val userSettings by viewModel.userSettings.collectAsState()
                 SettingsScreen(
-                    settings = userSettings,
+                    userSettings = userSettings,
                     audioQuality = audioQuality,
-                    isOfflineOnlyMode = viewModel.isOfflineOnlyMode.collectAsState().value,
-                    onLanguageToggle = { viewModel.toggleMusicLanguage(it) },
-                    onAudioQualityClick = { viewModel.setShowAudioQualityDialog(true) },
-                    onOfflineModeToggle = { viewModel.toggleOfflineMode() },
-                    onPrioritizeDiscoveryToggle = { viewModel.togglePrioritizeDiscovery() },
-                    onPrioritizeDjToggle = { viewModel.togglePrioritizeDj() },
-                    onDjPersonaChange = { viewModel.setDjVoicePersona(it) },
-                    onBackClick = { viewModel.setSettingsOpen(false) }
+                    isOfflineMode = viewModel.isOfflineOnlyMode.collectAsState().value,
+                    onBack = { viewModel.setSettingsOpen(false) },
+                    onToggleLanguage = { viewModel.toggleMusicLanguage(it) },
+                    onTogglePrioritizeDiscovery = { viewModel.togglePrioritizeDiscovery() },
+                    onTogglePrioritizeDj = { viewModel.togglePrioritizeDj() },
+                    onSelectVoicePersona = { viewModel.setDjVoicePersona(it) },
+                    onToggleOfflineMode = { viewModel.toggleOfflineMode() },
+                    onOpenAudioQuality = { viewModel.setShowAudioQualityDialog(true) },
+                    onResetTasteProfile = { viewModel.resetTasteProfile() }
                 )
             } else if (selectedPlaylist != null) {
                 PlaylistDetailScreen(
                     playlist = selectedPlaylist!!,
-                    allSongs = viewModel.allSongs.collectAsState().value,
+                    songsInPlaylist = viewModel.allSongs.collectAsState().value,
+                    onBack = { viewModel.selectPlaylist(null) },
                     onSongClick = { song, queue -> viewModel.playSong(song, queue) },
-                    onBackClick = { viewModel.selectPlaylist(null) }
+                    onPlayAll = { },
+                    onShuffleAll = { },
+                    onToggleFavorite = { viewModel.toggleFavorite(it) },
+                    onDownloadSong = { viewModel.downloadSong(it) }
                 )
             } else {
                 when (currentTab) {
@@ -185,6 +190,8 @@ fun SoundifyApp(viewModel: MusicPlayerViewModel = viewModel()) {
                             onStartSession = { viewModel.startDjSession(it) },
                             onOpenTrainAiDialog = { viewModel.setShowTrainDjDialog(true) },
                             onToggleTtsVoice = { viewModel.toggleTtsVoice() },
+                            onSpeakCommentary = { viewModel.speakCurrentDjCommentary() },
+                            onStopSpeaking = { viewModel.stopDjSpeaking() },
                             onSongClick = { song, queue -> viewModel.playSong(song, queue) }
                         )
                     }
@@ -228,8 +235,12 @@ fun SoundifyApp(viewModel: MusicPlayerViewModel = viewModel()) {
     // Dialogs
     if (showAudioQualityDialog) {
         AudioQualityDialog(
-            currentQuality = audioQuality,
-            onSelect = { viewModel.setAudioQuality(it) },
+            selectedQuality = audioQuality,
+            currentPreset = viewModel.currentEqualizer.collectAsState().value,
+            bassBoostLevel = viewModel.bassBoostLevel.collectAsState().value,
+            onSelectQuality = { viewModel.setAudioQuality(it) },
+            onSelectPreset = { viewModel.setEqualizerPreset(it) },
+            onBassBoostChanged = { viewModel.setBassBoost(it) },
             onDismiss = { viewModel.setShowAudioQualityDialog(false) }
         )
     }
@@ -243,9 +254,10 @@ fun SoundifyApp(viewModel: MusicPlayerViewModel = viewModel()) {
 
     if (showTrainDjDialog) {
         TrainDjDialog(
+            tasteProfile = tasteProfile,
             isTraining = viewModel.isTrainingAi.collectAsState().value,
             progressStep = viewModel.trainingProgressStep.collectAsState().value,
-            onStartTraining = { viewModel.triggerTrainAiModel() },
+            onTrainClick = { viewModel.triggerTrainAiModel() },
             onDismiss = { viewModel.setShowTrainDjDialog(false) }
         )
     }
