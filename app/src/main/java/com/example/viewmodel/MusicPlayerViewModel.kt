@@ -228,24 +228,26 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
 
         audioPlayer.setOnTrackChangedListener { mediaId ->
             val track = _currentQueue.value.find { it.id == mediaId }
-            if (track != null && _currentSong.value?.id != mediaId) {
-                _currentSong.value?.let { prev ->
-                    val listenedMs = System.currentTimeMillis() - songStartTimeMs
-                    viewModelScope.launch {
-                        repository.recordListeningEvent(
-                            song = prev,
-                            durationListenedMs = listenedMs,
-                            wasCompleted = true,
-                            wasSkipped = false
-                        )
-                    }
-                }
+            if (track != null) {
+                playedSongIds.add(track.id)
+                playedSongTitles.add(cleanTitle(track.title))
                 
-                _currentSong.value = track
-                songStartTimeMs = System.currentTimeMillis()
-                val cTitle = cleanTitle(track.title)
-                playedTrackTitles.add(cTitle)
-                globalQueuedTitles.add(cTitle)
+                if (_currentSong.value?.id != mediaId) {
+                    _currentSong.value?.let { prev ->
+                        val listenedMs = System.currentTimeMillis() - songStartTimeMs
+                        viewModelScope.launch {
+                            repository.recordListeningEvent(
+                                song = prev,
+                                durationListenedMs = listenedMs,
+                                wasCompleted = true,
+                                wasSkipped = false
+                            )
+                        }
+                    }
+                    
+                    _currentSong.value = track
+                    songStartTimeMs = System.currentTimeMillis()
+                }
             }
         }
 
@@ -268,7 +270,14 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
                 val results2 = songSearchRepository.searchDomainSongs("Trending English")
                 var combined = (results1 + results2).distinctBy { it.id }.shuffled()
                 
-                combined = filterAndDeduplicate(combined)
+                combined = combined.filter { song ->
+                    !playedSongIds.contains(song.id) && !playedSongTitles.contains(cleanTitle(song.title))
+                }
+                
+                combined.forEach {
+                    playedSongIds.add(it.id)
+                    playedSongTitles.add(cleanTitle(it.title))
+                }
                 
                 if (combined.isNotEmpty()) {
                     _fetchedHomeSongs.value = combined
@@ -367,21 +376,9 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
     }
 
     private fun cleanTitle(t: String) = t.replace(Regex("\\(.*?\\)|\\[.*?\\]"), "").trim().lowercase()
-    private val playedTrackTitles = mutableSetOf<String>()
-    private val globalQueuedTitles = mutableSetOf<String>()
+    val playedSongIds = mutableSetOf<String>()
+    val playedSongTitles = mutableSetOf<String>()
     private var isPrefetching = false
-
-    private fun filterAndDeduplicate(songs: List<Song>): List<Song> {
-        val uniqueSongs = mutableListOf<Song>()
-        for (song in songs) {
-            val title = cleanTitle(song.title)
-            if (!globalQueuedTitles.contains(title)) {
-                globalQueuedTitles.add(title)
-                uniqueSongs.add(song)
-            }
-        }
-        return uniqueSongs
-    }
 
     fun playSong(song: Song, queue: List<Song>? = null) {
         if (_isOfflineOnlyMode.value && !song.isDownloaded) {
@@ -405,18 +402,24 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         songStartTimeMs = System.currentTimeMillis()
         
         val cTitle = cleanTitle(song.title)
-        playedTrackTitles.add(cTitle)
-        globalQueuedTitles.add(cTitle)
+        playedSongIds.add(song.id)
+        playedSongTitles.add(cTitle)
 
         if (queue != null) {
-            val deduplicatedQueue = filterAndDeduplicate(queue)
+            val deduplicatedQueue = queue.filter { s ->
+                !playedSongIds.contains(s.id) && !playedSongTitles.contains(cleanTitle(s.title))
+            }
             
-            // If the requested song was filtered out because it was a duplicate title, 
-            // force add it for this explicit user playback action to avoid breaking the player state
+            // force add it if missing due to filter
             val finalQueue = if (deduplicatedQueue.any { it.id == song.id }) {
                 deduplicatedQueue
             } else {
                 listOf(song) + deduplicatedQueue
+            }
+            
+            finalQueue.forEach {
+                playedSongIds.add(it.id)
+                playedSongTitles.add(cleanTitle(it.title))
             }
             
             _currentQueue.value = finalQueue
@@ -468,21 +471,31 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         val queue = _currentQueue.value
         try {
             var newSongsToAdd: List<Song> = emptyList()
-            var recommendations = songSearchRepository.getYouTubeRecommendations(current.title, current.artist, globalQueuedTitles)
-            newSongsToAdd = filterAndDeduplicate(recommendations)
+            val recommendations = songSearchRepository.getYouTubeRecommendations(current.title, current.artist, playedSongTitles)
+            newSongsToAdd = recommendations.filter { song ->
+                !playedSongIds.contains(song.id) && !playedSongTitles.contains(cleanTitle(song.title))
+            }
             
             if (newSongsToAdd.isEmpty()) {
                 val similarSongs = songSearchRepository.getSimilarDomainSongs(current.id)
-                newSongsToAdd = filterAndDeduplicate(similarSongs).take(3)
+                newSongsToAdd = similarSongs.filter { song ->
+                    !playedSongIds.contains(song.id) && !playedSongTitles.contains(cleanTitle(song.title))
+                }.take(3)
             }
             if (newSongsToAdd.isEmpty()) {
                 val fallbackQuery = "${current.artist} best songs"
                 val results = songSearchRepository.searchDomainSongs(fallbackQuery)
-                newSongsToAdd = filterAndDeduplicate(results).take(3)
+                newSongsToAdd = results.filter { song ->
+                    !playedSongIds.contains(song.id) && !playedSongTitles.contains(cleanTitle(song.title))
+                }.take(3)
             }
             
             if (newSongsToAdd.isNotEmpty()) {
                 kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                    newSongsToAdd.forEach { 
+                        playedSongIds.add(it.id)
+                        playedSongTitles.add(cleanTitle(it.title))
+                    }
                     val newQueue = queue + newSongsToAdd
                     _currentQueue.value = newQueue
                     audioPlayer.appendToQueue(newSongsToAdd)
@@ -519,35 +532,32 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
                 val lastSong = queue.find { it.id == lastSongId } ?: return@launch
                 
                 var newSongsToAdd: List<Song> = emptyList()
-                val recommendations = songSearchRepository.getYouTubeRecommendations(lastSong.title, lastSong.artist, globalQueuedTitles)
-                newSongsToAdd = filterAndDeduplicate(recommendations)
+                val recommendations = songSearchRepository.getYouTubeRecommendations(lastSong.title, lastSong.artist, playedSongTitles)
+                newSongsToAdd = recommendations.filter { song ->
+                    !playedSongIds.contains(song.id) && !playedSongTitles.contains(cleanTitle(song.title))
+                }
                 
                 if (newSongsToAdd.isEmpty()) {
                     val similarSongs = songSearchRepository.getSimilarDomainSongs(lastSongId)
-                    val blacklist = listOf("dj", "remix", "mix", "lofi", "slowed", "reverb", "8d", "mashup", "lo-fi", "instrumental")
-                    
-                    val sanitized = similarSongs.filter { song ->
-                        val lowerTitle = song.title.lowercase()
-                        val lowerArtist = song.artist.lowercase()
-                        !blacklist.any { lowerTitle.contains(it) || lowerArtist.contains(it) }
-                    }
-                    
-                    val currentArtists = lastSong.artist.lowercase().split(",").map { it.trim() }.filter { it.isNotEmpty() }
-                    val sortedSimilar = sanitized.sortedByDescending { song ->
-                        val songArtist = song.artist.lowercase()
-                        if (currentArtists.any { songArtist.contains(it) }) 1 else 0
-                    }
-                    newSongsToAdd = filterAndDeduplicate(sortedSimilar).take(3)
+                    newSongsToAdd = similarSongs.filter { song ->
+                        !playedSongIds.contains(song.id) && !playedSongTitles.contains(cleanTitle(song.title))
+                    }.take(3)
                 }
 
                 if (newSongsToAdd.isEmpty()) {
                     val fallbackQuery = "${lastSong.artist} top songs"
                     val results = songSearchRepository.searchDomainSongs(fallbackQuery)
-                    newSongsToAdd = filterAndDeduplicate(results).take(3)
+                    newSongsToAdd = results.filter { song ->
+                        !playedSongIds.contains(song.id) && !playedSongTitles.contains(cleanTitle(song.title))
+                    }.take(3)
                 }
 
                 if (newSongsToAdd.isNotEmpty()) {
                     kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                        newSongsToAdd.forEach { 
+                            playedSongIds.add(it.id)
+                            playedSongTitles.add(cleanTitle(it.title))
+                        }
                         val newQueue = queue + newSongsToAdd
                         _currentQueue.value = newQueue
                         audioPlayer.appendToQueue(newSongsToAdd)
